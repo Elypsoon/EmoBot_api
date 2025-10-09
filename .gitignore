@@ -1,0 +1,4 @@
+.env
+RoBERTa_local/
+Models/
+__pycache__/
