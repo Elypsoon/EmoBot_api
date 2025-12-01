@@ -19,7 +19,6 @@
 - [Módulos de la API](#-módulos-de-la-api)
 - [Modelos](#-modelos)
 - [Configuración](#-configuración)
-
 ---
 
 ## 🎯 Descripción

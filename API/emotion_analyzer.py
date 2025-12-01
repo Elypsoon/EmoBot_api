@@ -1,19 +1,19 @@
 """
 Módulo para análisis de emociones usando el modelo RoBERTa entrenado.
-Maneja la carga del modelo y la predicción de emociones desde texto.
+Maneja la carga del modelo local y la predicción de emociones desde texto.
 """
 
 import torch
 import numpy as np
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from typing import Dict
 
 from config import (
     LOCAL_MODEL_DIR,
-    CHECKPOINT_PATH,
     NUM_EMOTIONS,
     EMOTION_NAMES,
-    DEVICE
+    DEVICE,
+    limpiar_texto
 )
 
 
@@ -21,35 +21,32 @@ class EmotionAnalyzer:
     """Clase para cargar y usar el modelo de detección de emociones."""
     
     def __init__(self):
-        """Inicializa y carga el modelo emocional y el tokenizer."""
+        """Inicializa y carga el modelo emocional y el tokenizer desde local."""
         print(f"[INFO] Usando dispositivo: {DEVICE}")
-        print("[INFO] Cargando tokenizer y modelo emocional desde local...")
+        print(f"[INFO] Cargando tokenizer y modelo desde: {LOCAL_MODEL_DIR}")
         
-        # Cargar tokenizer
+        # Cargar tokenizer desde directorio local
         self.tokenizer = AutoTokenizer.from_pretrained(
             LOCAL_MODEL_DIR,
             local_files_only=True,
             use_fast=True
         )
         
-        # Configurar modelo
-        config = AutoConfig.from_pretrained(
+        # Cargar modelo completo desde directorio local (incluye pesos)
+        self.model = AutoModelForSequenceClassification.from_pretrained(
             LOCAL_MODEL_DIR,
             local_files_only=True
         )
-        config.num_labels = NUM_EMOTIONS
-        config.id2label = {i: lab for i, lab in enumerate(EMOTION_NAMES)}
-        config.label2id = {lab: i for i, lab in enumerate(EMOTION_NAMES)}
-        config.problem_type = "multi_label_classification"
         
-        # Cargar modelo y pesos
-        self.model = AutoModelForSequenceClassification.from_config(config)
-        state_dict = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
-        self.model.load_state_dict(state_dict)
+        # Actualizar configuración del modelo para las emociones
+        self.model.config.num_labels = NUM_EMOTIONS
+        self.model.config.id2label = {i: lab for i, lab in enumerate(EMOTION_NAMES)}
+        self.model.config.label2id = {lab: i for i, lab in enumerate(EMOTION_NAMES)}
+        
         self.model.to(DEVICE)
         self.model.eval()
         
-        print("[OK ] Modelo emocional cargado.")
+        print("[OK ] Modelo emocional cargado correctamente.")
     
     def get_emotion_vector(self, text: str, max_length: int = 256) -> np.ndarray:
         """
@@ -62,8 +59,11 @@ class EmotionAnalyzer:
         Returns:
             Array numpy con las probabilidades de cada emoción (shape: NUM_EMOTIONS,)
         """
+        # Limpiar texto antes de tokenizar
+        cleaned_text = limpiar_texto(text)
+        
         encoding = self.tokenizer(
-            text,
+            cleaned_text,
             truncation=True,
             padding="max_length",
             max_length=max_length,
