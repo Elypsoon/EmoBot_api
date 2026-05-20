@@ -53,23 +53,16 @@ EmoBot_api/
 │   ├── main.py                    # Aplicación principal de chat
 │   └── __pycache__/               # Archivos compilados de Python
 │
-├── Models/                        # 🧠 Modelos entrenados
-│   ├── RoBERTa_Emociones_Model.pth    # Pesos del modelo de emociones
+├── Models/                        # 🧠 Modelos y recursos guardados
+│   ├── best_hyperparameters.json      # Hiperparámetros óptimos del modelo
 │   ├── evaluator_model.pkl            # Modelo evaluador (LogReg)
 │   └── scaler.pkl                     # Escalador de características
 │
-├── RoBERTa_local/                 # 🤗 Modelo RoBERTa base local
-│   ├── config.json                # Configuración del transformer
-│   ├── pytorch_model.bin          # Pesos base del modelo
-│   ├── tokenizer.json             # Tokenizer entrenado
-│   ├── vocab.json                 # Vocabulario
-│   ├── merges.txt                 # BPE merges
-│   ├── special_tokens_map.json    # Tokens especiales
-│   └── tokenizer_config.json      # Config del tokenizer
-│
-├── .env                           # 🔐 Variables de entorno (API keys)
+├── .env                           # 🔐 Variables de entorno (API keys y paths)
 └── README.md                      # 📖 Este archivo
 ```
+
+> **Nota:** El modelo RoBERTa con *fine-tuning* utilizado para el análisis de emociones no se incluye directamente en el repositorio por su tamaño. Su ubicación se define mediante la variable `MODEL_DIR` en el archivo `.env`.
 
 ---
 
@@ -137,15 +130,22 @@ source venv/bin/activate
 ```
 
 3. **Instalar dependencias**
+
+Es recomendable instalar PyTorch primero con soporte CUDA si tienes una GPU:
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install transformers numpy scikit-learn joblib google-genai
+```
+
+Luego instala el resto de las dependencias usando el archivo `requirements.txt`:
+```bash
+pip install -r requirements.txt
 ```
 
 4. **Configurar variables de entorno**
 ```bash
-# Crear archivo .env en la raíz del proyecto
+# Crear archivo .env en la raíz del proyecto y agregar las claves
 echo "GEMINI_API_KEY=tu_api_key_aqui" > .env
+echo "MODEL_DIR=../RoBERTa_local" >> .env
 ```
 
 5. **Verificar estructura de modelos**
@@ -155,39 +155,36 @@ Asegúrate de que las carpetas `Models/` y `RoBERTa_local/` contengan todos los 
 
 ## 💻 Uso
 
-### Ejecución Básica
+### Iniciar el Servidor API
+
+El proyecto está diseñado como una API REST usando FastAPI. Para iniciar el servidor:
 
 ```bash
 cd API
-python main.py
+uvicorn main:app --reload
 ```
 
-### Comandos Disponibles en el Chat
+El servidor estará disponible en `http://127.0.0.1:8000`. Puedes acceder a la documentación interactiva (Swagger UI) en `http://127.0.0.1:8000/docs`.
 
-- 📝 **Escribe tu mensaje**: Simplemente escribe y presiona Enter
-- ❌ `/quit` o `/exit`: Salir del chat
-- 📊 `/summary`: Ver resumen estadístico de la sesión actual
+### Ejemplo de Petición al Chat
 
-### Ejemplo de Sesión
+Puedes probar la API haciendo una solicitud POST al endpoint `/chat`:
 
+```bash
+curl -X POST "http://127.0.0.1:8000/chat" \
+     -H "Content-Type: application/json" \
+     -d '{"message": "Me siento muy ansioso últimamente"}'
 ```
-=== Chat EmoBot (Transformer + Evaluador + LLM) ===
 
-[INFO] Usando dispositivo: cuda
-[INFO] Cargando tokenizer y modelo emocional desde local...
-[OK ] Modelo emocional cargado.
-[INFO] Cargando evaluador (LogReg) y scaler...
-[OK ] Scaler cargado.
-[OK ] LLM (Gemini) inicializado.
-
-Escribe tu mensaje y presiona Enter.
-Comandos: /quit para salir, /summary para ver resumen de la sesión.
-
-Tú: Me siento muy ansioso últimamente
-[ANÁLISIS] emocionesTop: [('miedo', 0.85), ('tristeza', 0.62), ('ira', 0.23)]
-[RIESGO] none=0.12 | anxiety=0.78 | depression=0.10 => pred: anxiety
-Asistente: Entiendo que la ansiedad puede ser muy abrumadora. ¿Hay algo en particular que sientas que está desencadenando esa ansiedad? ¿Cómo has estado manejando estos sentimientos?
+**Respuesta Esperada:**
+```json
+{
+  "response": "Entiendo que la ansiedad puede ser muy abrumadora. ¿Hay algo en particular que sientas que está desencadenando esa ansiedad? ¿Cómo has estado manejando estos sentimientos?",
+  "session_id": "893c5fa41a94..."
+}
 ```
+
+Puedes usar el `session_id` devuelto en peticiones futuras a `/chat` incluyéndolo en el cuerpo del JSON para mantener el contexto de tu conversación.
 
 ---
 
@@ -278,44 +275,38 @@ Asistente: Entiendo que la ansiedad puede ser muy abrumadora. ¿Hay algo en part
 
 ### 5. 🎬 `main.py`
 
-**Propósito**: Aplicación principal y orquestador del sistema
+**Propósito**: Exponer los servicios del proyecto mediante una API REST
 
 **Funcionalidades**:
-- Inicialización de todos los componentes
-- Bucle de conversación interactivo
-- Análisis en tiempo real
-- Gestión de historial de sesión
-- Comandos especiales del usuario
+- Inicialización de todos los componentes a través del ciclo de vida (`lifespan`) de FastAPI
+- Endpoints para evaluar riesgos y conectar con el modelo Gemini
+- Análisis en tiempo real a través del endpoint `/chat`
+- Gestión de la sesión de conversación en memoria
 
-**Flujo de ejecución**:
+**Flujo de una petición HTTP al chat**:
 
 ```python
-1. Cargar EmotionAnalyzer
-2. Cargar RiskEvaluator
-3. Inicializar GeminiAdapter
-4. Loop:
-   a. Recibir input del usuario
-   b. Analizar emociones
-   c. Evaluar riesgo
-   d. Generar respuesta con LLM
-   e. Mostrar resultados
-   f. Guardar en historial
+1. Se recibe un mensaje mediante POST en /chat con un session_id (o se crea uno temporal)
+2. Se evalúan las emociones y el riesgo del mensaje utilizando RiskEvaluator
+3. Se envian los análisis extraídos y el texto del usuario a GeminiAdapter
+4. FastAPI registra la entrada, el análisis y la salida en el historial de sesiones en memoria
+5. Se devuelve al cliente la respuesta del LLM y el session_id
 ```
 
-**Salida en consola**:
-- 📊 Análisis de emociones (top 3)
-- 🎯 Probabilidades de riesgo
-- 🏷️ Predicción de clase
-- 💬 Respuesta del asistente
+**Endpoints principales**:
+- `GET /`: Mensaje de bienvenida y status básico de la API.
+- `GET /health`: Estado de los componentes (modelos e IA local).
+- `POST /chat`: Interfaz principal para interactuar enviando mensajes de chat.
+- `DELETE /session/{session_id}`: Limpia y elimina el contexto de una sesión en memoria.
 
 ---
 
 ## 🧠 Modelos
 
-### RoBERTa de Emociones
+### RoBERTa de Emociones (Fine-Tuned)
 
-- **Archivo**: `Models/RoBERTa_Emociones_Model.pth`
-- **Base**: RoBERTa pre-entrenado (transformers)
+- **Directorio**: Definido por la variable `MODEL_DIR` en el `.env` (ruta externa al proyecto).
+- **Base**: Modelo RoBERTa pre-entrenado adaptado (fine-tuning) específicamente para detección de emociones en texto.
 - **Tarea**: Clasificación multi-etiqueta
 - **Clases**: 6 emociones (disgusto, sorpresa, ira, tristeza, felicidad, miedo)
 - **Función de activación**: Sigmoid
@@ -331,7 +322,7 @@ Asistente: Entiendo que la ansiedad puede ser muy abrumadora. ¿Hay algo en part
 
 ### Tokenizer y Configuración
 
-- **Directorio**: `RoBERTa_local/`
+- **Directorio**: Definido por `MODEL_DIR` en el `.env` (comparte ruta con el modelo fine-tuned).
 - **Tipo**: BPE (Byte-Pair Encoding)
 - **Vocabulario**: ~50k tokens
 - **Tokens especiales**: `<s>`, `</s>`, `<pad>`, `<unk>`, `<mask>`
